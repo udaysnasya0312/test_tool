@@ -9,14 +9,16 @@ image does not run application tests. To use updated tests, publish a new image.
 
 1. In Docker Hub, create a personal access token with Read and Write permissions.
 2. In your GitHub repository, open **Settings > Secrets and variables > Actions**.
-   Select **New repository secret** and add each secret below:
+   Configure the `dev` environment under **Settings > Environments**, and add
+   each secret below to that environment. The publish job uses `environment: dev`.
 
    | Key | Value |
    | --- | --- |
    | `DOCKERHUB_USERNAME` | `udaynasya` |
    | `DOCKERHUB_TOKEN` | Your Docker Hub access token |
 
-   Use the newly generated token, replacing the one previously exposed in a
+   Repository secrets with the same names also work if no environment secret
+   overrides them. Use the newly generated token, replacing the one previously exposed in a
    screenshot. GitLab variables do not transfer to GitHub. Do not put the token
    in `.env` or tracked files.
 3. Ensure GitHub Actions is enabled for the repository. The workflow uses a
