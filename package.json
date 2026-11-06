@@ -1,0 +1,26 @@
+{
+  "name": "portable-testing-framework",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node run_tests.mjs",
+    "test:api": "node run_tests.mjs --api",
+    "test:ui": "node run_tests.mjs --ui",
+    "test:e2e": "node run_tests.mjs --e2e",
+    "test:api-ui": "node run_parallel.mjs",
+    "test:headed": "node run_tests.mjs --headed",
+    "test:debug": "node run_tests.mjs --debug",
+    "report": "node run_tests.mjs --report",
+    "typecheck": "tsc --noEmit",
+    "allure": "node run_tests.mjs --allure"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.55.0",
+    "@types/node": "^22.18.0",
+    "allure": "^3.20.1",
+    "allure-playwright": "^3.13.0",
+    "dotenv": "^16.6.1",
+    "typescript": "^5.9.2"
+  }
+}

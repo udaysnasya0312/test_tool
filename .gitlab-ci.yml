@@ -1,0 +1,35 @@
+stages:
+  - publish
+
+publish_docker_image:
+  stage: publish
+  image: docker:27.5.1-cli
+  services:
+    - name: docker:27.5.1-dind
+      alias: docker
+  variables:
+    DOCKER_HOST: tcp://docker:2376
+    DOCKER_TLS_CERTDIR: /certs
+    DOCKER_TLS_VERIFY: "1"
+    DOCKER_CERT_PATH: /certs/client
+    DOCKER_IMAGE: udaynasya/test_tool
+  resource_group: dockerhub-publish
+  rules:
+    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH && ($CI_PIPELINE_SOURCE == "push" || $CI_PIPELINE_SOURCE == "web")'
+      when: manual
+    - when: never
+  before_script:
+    - test -n "$DOCKERHUB_USERNAME"
+    - test -n "$DOCKERHUB_TOKEN"
+    - printf '%s' "$DOCKERHUB_TOKEN" | docker login --username "$DOCKERHUB_USERNAME" --password-stdin
+  script:
+    - docker build --pull --label "org.opencontainers.image.revision=$CI_COMMIT_SHA" --tag "$DOCKER_IMAGE:$CI_COMMIT_SHA" .
+    # Verify the installed Chromium can launch, without contacting a test application.
+    - >-
+      docker run --rm --init --shm-size=1g --entrypoint node "$DOCKER_IMAGE:$CI_COMMIT_SHA"
+      --input-type=module -e 'import { chromium } from "@playwright/test"; const browser = await chromium.launch(); await browser.close();'
+    - docker push "$DOCKER_IMAGE:$CI_COMMIT_SHA"
+    - docker tag "$DOCKER_IMAGE:$CI_COMMIT_SHA" "$DOCKER_IMAGE:latest"
+    - docker push "$DOCKER_IMAGE:latest"
+  after_script:
+    - docker logout

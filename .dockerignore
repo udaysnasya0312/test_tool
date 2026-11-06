@@ -1,0 +1,26 @@
+# Only include files needed by the runner.
+**
+!package.json
+!package-lock.json
+!playwright.config.ts
+!tsconfig.json
+!allurerc.mjs
+!run_tests.mjs
+!run_parallel.mjs
+!core/
+!core/**
+!apps/
+!apps/**
+
+# Never bake runtime secrets or generated artifacts into the image.
+**/.env
+**/.env.*
+**/node_modules
+**/reports
+**/test-results
+**/playwright-report
+**/.auth
+**/storageState.json
+**/auth_headers.json
+**/*.pem
+**/*.key

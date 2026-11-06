@@ -1,0 +1,404 @@
+# Automated Testing Proposal
+
+Status: PROPOSAL (discussion only, nothing installed or built yet)
+Date: 2026-09-24 (updated 2026-09-28)
+
+
+## 1. Purpose
+
+Today, testing an application like this requires manually opening pages and clicking through them. This is
+slow, error-prone, and must be repeated after every change.
+
+This proposal introduces a **standalone, plug-and-play test framework** that automatically runs tests and
+reports what passed, failed, and why.
+
+The framework is not tied to any one application, and not tied to Kibana. Kibana/ELK-based applications can
+be added through their own configuration and tests, and so can applications built with React/Vite or plain
+HTML/CSS/JS with a Python backend. Kibana-specific tools such as Scout cannot cover that last group.
+
+
+## 2. Goals
+
+- Test the screens (UI) and the backend routes/APIs automatically, for any application, not only Kibana plugins.
+- Run everything with a single command and get one report.
+- For every API call, record the status code, the response and the actual error message if it failed.
+- Reuse the same framework across different applications, including non-Kibana, non-React apps, with
+  minimal effort.
+
+Out of scope for now:
+- Production or staging environments (local development setup only).
+- Automatic runs from a build server (CI). This can be added later without rewriting anything.
+- Performance and load testing, and security testing.
+
+
+## 3. What we will use
+
+| Need                    | Tool                          | Why                                                        |
+|-------------------------|-------------------------------|------------------------------------------------------------|
+| UI testing              | Playwright                    | Drives a real browser (Chrome) and clicks through the app  |
+| API (backend) testing   | Playwright (built-in API client) | Same tool, so one command and one report                |
+| Reports                 | Playwright HTML report        | Pass/fail, screenshots, videos, replayable traces          |
+| Language                | TypeScript                    | Common language for both the test code and the apps it covers |
+
+Why Playwright for both: one tool means one setup, one command and one report to maintain.
+
+Alternatives considered:
+- Selenium: works for the UI, but is slower and less stable, and does not cover API calls.
+- Postman / Newman: can run API collections automatically, but adds a second tool and a second report.
+
+
+## 3.1 How Playwright handles the two kinds of testing
+
+UI tests: a real browser opens, logs in, clicks and types, then checks what appears on the screen.
+It can run visibly (to watch the flow), step by step in a timeline view, or invisibly for speed.
+
+API tests: no browser is opened. Playwright sends GET, POST, PUT, PATCH and DELETE requests directly to
+the server routes, with headers and payloads where needed, and checks the status code and response.
+
+
+## 4. Where it lives (separate repo)
+
+The test framework is its own project, kept next to the application code, not inside it:
+
+```
+/home/ubuntu/
+  <application repo(s)>    the app(s) under test, unchanged
+  testing_framework/       the test framework (new, its own git repo)
+```
+
+Why separate:
+- It can test any app without touching that app's code, whether or not it is a Kibana plugin.
+- Application upgrades and branch changes do not affect it.
+- It works the same way for a future React/Vite app, or a plain HTML/CSS/JS app with a Python backend,
+  since Playwright only needs a URL to open and, for the API side, HTTP endpoints to call. Neither depends
+  on the app being built with any particular framework or language.
+- Other teams can reuse it.
+
+It still runs on the same Linux machine and talks to each application over its normal URL.
+
+
+## 5. Structure of the framework
+
+```
+testing_framework/
+  package.json                     project name, tool versions, the run commands
+  tsconfig.json                    TypeScript settings
+  playwright.config.ts             browser, timeouts, report and video settings
+  .env.example                     template for URL and login details (real .env is never committed)
+  .gitignore                       keeps reports and .env out of git
+  README.md                        how to run, how to add a new app
+  run_tests.sh                     the single command:  ./run_tests.sh <app_name>
+
+  core/                            reusable engine, same for every app
+    types.ts                       shared definitions (what an API test row looks like, app config shape)
+    health_check.ts                checks the target application is up before tests start
+    login.ts                       signs in and saves the session so tests do not log in every time
+    api_runner.ts                  runs a table of API calls and records status, body and error
+    data_setup.ts                  loads and cleans up test data
+    reporting.ts                   collects results, screenshots, videos and traces
+
+  apps/
+    <app_name>/                    everything specific to one application (Kibana/ELK app or otherwise)
+      app_config.ts                base URL, route prefix, login details, health check URL
+      pages/                       one small helper per screen (where the buttons and fields are)
+        login_page.ts
+        <feature>_page.ts
+      api/                         API test tables and the file that runs them
+        auth_routes.ts             table: login/signup/logout-style routes
+        <feature>_routes.ts        table: routes for one feature area
+        api.spec.ts                loops over all tables using core/api_runner.ts
+      ui/                          screen flows, one file per feature
+        login.spec.ts
+        <feature>.spec.ts
+      data/                        test data for this application
+        test_users.json
+        <feature>_sample_data.json
+
+    <other_app>/                   same shape, new content, added later
+
+  reports/                         generated after every run (HTML report, videos, traces) - not in git
+```
+
+File naming: `*.spec.ts` files are the test cases (Playwright runs them automatically). `pages/` files are
+helpers that hold "where things are on the screen", so if a button changes only one file needs updating.
+
+Rule: the core never contains anything specific to one app. Each app folder contains only its own facts.
+
+
+## 6. How the API tests work
+
+Every API call is one row in a table, so many routes can be covered without writing many separate tests.
+
+| Field            | GET / DELETE      | POST / PUT / PATCH                     |
+|------------------|-------------------|----------------------------------------|
+| Method and URL   | yes               | yes                                    |
+| Headers          | not needed        | yes (a Kibana-based app needs a `kbn-xsrf` header on writes) |
+| Payload (body)   | not needed        | yes                                    |
+| Expected status  | yes (e.g. 200)    | yes (e.g. 200 or 201)                  |
+| Expected content | optional check    | optional check                         |
+
+For each call the runner records:
+- the status code,
+- the full response body,
+- the actual error message when it fails,
+- pass or fail against what was expected.
+
+To keep the tests reliable:
+- Create, read, update and delete are chained (POST creates a record, GET reads it, DELETE removes it),
+  so each run cleans up after itself.
+- Negative cases are included (bad input should fail with the right error, not crash).
+- Routes that send real email, or cause other real-world side effects, are skipped or pointed at a safe
+  stand-in (e.g. a fake mail server). Tests never trigger a real side effect.
+
+
+### 6.1 Example: a login route (API)
+
+File: `apps/<app_name>/api/auth_routes.ts` (a table, not code that runs by itself)
+
+```ts
+import type { ApiTestCase } from '../../../core/types';
+
+export const authRoutes: ApiTestCase[] = [
+  {
+    name: 'login - valid user',
+    method: 'POST',
+    url: '/login',
+    headers: { 'kbn-xsrf': 'true', 'Content-Type': 'application/json' },
+    payload: { email: 'qa_user@example.com', password: 'QaPass@123' },
+    expectHttpStatus: 200,
+    expectBody: { status: 200 },
+  },
+  {
+    name: 'login - wrong password',
+    method: 'POST',
+    url: '/login',
+    headers: { 'kbn-xsrf': 'true', 'Content-Type': 'application/json' },
+    payload: { email: 'qa_user@example.com', password: 'wrong' },
+    expectHttpStatus: 200,
+    expectBody: { status: 400 },
+  },
+  {
+    name: 'login - missing password (rejected before the route runs)',
+    method: 'POST',
+    url: '/login',
+    headers: { 'kbn-xsrf': 'true', 'Content-Type': 'application/json' },
+    payload: { email: 'qa_user@example.com' },
+    expectHttpStatus: 400,
+  },
+];
+```
+
+Worth calling out in general: some login-style routes answer with HTTP 200 even when the login itself
+failed, putting the real result inside the response body (e.g. a `status` field) instead of the HTTP status
+code. When that pattern shows up in a given app, the test must check both the HTTP status and the body,
+otherwise a failed login would look like a pass.
+
+`api.spec.ts` loops over a table like this, sends each request, and records for every row: the HTTP status,
+the full response body, the error message if any, and pass or fail against the expected values.
+
+
+## 7. How the UI tests work
+
+Each screen flow is one test. Example, a login flow:
+
+1. Open the browser and go to the app URL.
+2. Enter the username and password and click Login.
+3. Check that the home page shows.
+4. Record pass or fail, with a screenshot and video if it failed.
+
+Flows are written per application, one file per screen or feature (login, signup, home, and so on).
+
+
+### 7.1 Example: a login flow (UI)
+
+The screen helper, `apps/<app_name>/pages/login_page.ts` (knows where things are on the Login screen):
+
+```ts
+import type { Page } from '@playwright/test';
+
+export class LoginPage {
+  constructor(private readonly page: Page) {}
+
+  emailField = () => this.page.getByPlaceholder('E-mail');
+  passwordField = () => this.page.getByPlaceholder('Password').first();
+  loginButton = () => this.page.getByRole('button', { name: 'Login' });
+
+  open = async () => {
+    await this.page.goto('/login');
+  };
+
+  signIn = async (email: string, password: string) => {
+    await this.emailField().fill(email);
+    await this.passwordField().fill(password);
+    await this.loginButton().click();
+  };
+}
+```
+
+The test cases, `apps/<app_name>/ui/login.spec.ts`:
+
+```ts
+import { test, expect } from '@playwright/test';
+import { LoginPage } from '../pages/login_page';
+import users from '../data/test_users.json';
+
+test.describe('Login', () => {
+  test('valid user can log in and reaches the home page', async ({ page }) => {
+    const loginPage = new LoginPage(page);
+
+    await loginPage.open();                                   // 1. go to the login screen
+    await loginPage.signIn(users.valid.email, users.valid.password); // 2. fill email + password, click Login
+
+    await expect(page.getByText('Login Successful')).toBeVisible();  // 3. success message shows
+    await expect(page).toHaveURL(/\/$/);                       // 4. moved to the home page
+  });
+
+  test('wrong password shows an error and stays on the login screen', async ({ page }) => {
+    const loginPage = new LoginPage(page);
+
+    await loginPage.open();
+    await loginPage.signIn(users.valid.email, 'wrong-password');
+
+    await expect(page.getByText('Invalid Credentials')).toBeVisible();
+    await expect(loginPage.loginButton()).toBeVisible();      // still on the login screen
+  });
+
+  test('badly formed email is rejected before any request is sent', async ({ page }) => {
+    const loginPage = new LoginPage(page);
+
+    await loginPage.open();
+    await loginPage.signIn('not-an-email', 'anything');
+
+    await expect(page.getByText('Invalid Email')).toBeVisible();
+  });
+
+  test('empty form does not log in', async ({ page }) => {
+    const loginPage = new LoginPage(page);
+
+    await loginPage.open();
+    await loginPage.loginButton().click();
+
+    await expect(page.getByText('Login Successful')).toHaveCount(0);
+  });
+});
+```
+
+The test data, `apps/<app_name>/data/test_users.json`:
+
+```json
+{
+  "valid": { "email": "qa_user@example.com", "password": "QaPass@123" }
+}
+```
+
+What this example checks: a valid login works, a wrong password fails with the right message, a badly formed
+email is caught on the screen, and an empty form does not log in.
+
+Note: the field labels, messages and page address in this example are placeholders. Each application's
+actual labels, messages, routes and login requirements are confirmed against its real screens and routes
+during implementation.
+
+Ways to watch a run:
+- Visible browser: the window opens and the steps play out on screen.
+- UI mode: a timeline where each step can be clicked to see the page at that moment.
+- Invisible (headless): fastest, used for routine runs.
+- After any run: video and a trace file that replays the whole flow step by step.
+
+
+## 8. Test data
+
+- Tests use a small, known set of data, not the full real data.
+- Data is loaded before a run and cleaned up after it, so runs do not affect each other.
+- Real user data is never modified by the tests.
+- The test data lives inside each app folder (`apps/<app_name>/data/`, for example `test_users.json`).
+
+
+## 9. How a run works (flow)
+
+```
+1. Run one command, for example:  ./run_tests.sh <app_name>
+2. Framework reads apps/<app_name>/app_config.ts
+3. Health check: is the target application up and reachable?  (stop with a clear message if not)
+4. Load the test data
+5. Run the API tests one by one and record each result
+6. Run the UI tests one by one in the browser
+7. Clean up the test data
+8. Produce one report with pass/fail, status codes, errors, screenshots, videos
+```
+
+The command is run by hand on the Linux machine when needed.
+
+
+## 10. Adding another application later (Kibana/ELK-based or not)
+
+1. Copy an existing `apps/<app_name>` folder and rename it for the new application.
+2. Edit its config (URL, login) — for a non-Kibana app, this is just its own base URL and login, no
+   Kibana-specific settings.
+3. Write its API table and UI flows.
+4. Run with `./run_tests.sh <new_app>`.
+
+The core does not change, regardless of what the new application is built with.
+
+
+## 11. Risks and future challenges
+
+### Specific to Kibana/ELK-based applications
+- **Real side effects:** routes that send real email, or cause other real-world side effects, must be
+  skipped or isolated so tests never trigger them by accident.
+- **Response shape quirks:** as shown in 6.1, some routes return HTTP 200 even on a logical failure, with
+  the real result only inside the response body. Each such route needs its test written accordingly, or a
+  passing test can hide a real failure.
+- **External dependencies:** some pages may call third-party or external hosts that don't answer from the
+  test machine. Tests touching them will fail for reasons outside the app, and need to be marked and
+  handled separately so they don't add noise to the report.
+- **Non-deterministic features:** anything backed by an AI/model response, live data feed, or similar,
+  cannot be checked for exact output; tests can only check that a valid response comes back.
+- **Canvas-based charts:** charting libraries that draw on a `<canvas>` element (as opposed to plain HTML/SVG)
+  cannot have their values read directly by Playwright. UI tests can only check that a chart appears; the
+  underlying data must be checked through the API tests instead.
+- **Multiple languages / i18n:** tests that find elements by visible text only work in the language they
+  were written for, and any text or translation change can break them.
+
+### Test data and environment
+- **Shared Elasticsearch:** running tests against a real, shared Elasticsearch risks changing or deleting
+  real data. A separate test index/cluster, or clearly test-only index names, is safer.
+- **Credential handling:** test users must be created however the target application actually expects
+  (its exact login/auth mechanism), which is confirmed per application during implementation.
+- **Startup dependency:** the target application must be fully up and reachable before a run starts; a
+  changed base URL or an unready backend breaks every test.
+- **Run time:** as coverage grows, a full run can get slow; tests will need splitting into a fast smoke set
+  and a full set, and possibly parallel runs.
+
+### Long-term maintenance
+- **UI changes break tests:** any screen change can break its tests; the `pages/` helper files limit the
+  blast radius but don't remove it.
+- **Flaky tests:** tests that pass or fail inconsistently (usually from timing or shared data) are the
+  biggest long-term risk to trust in the results.
+- **Framework/library upgrades:** a version bump in the app's own UI framework can change the rendered HTML
+  and break selectors.
+- **Ownership:** without someone responsible for keeping tests updated, they go stale within months.
+- **Team skill:** writing and maintaining tests needs basic TypeScript.
+
+### Framework scope
+- **Over-building early:** designing for every possible future app before a second one exists can waste
+  effort; the plan is to build for the first application and generalize as real second/third apps show up.
+- **Coverage size:** an application with a large number of routes and screens can't be covered all at once
+  without stalling progress, so coverage should grow gradually, starting from the most important flows.
+
+Mitigations already reflected in this plan: separate test data (section 8), a health check before every run
+(section 9), and starting small (login + a few routes) before expanding (section 12).
+
+
+## 12. Proposed next steps
+
+1. Agree on this proposal (tools, separate repo, structure).
+2. Create the `testing_framework` repo and the core engine.
+3. Add the first application's folder with a first UI test (login) and a first API table (a few routes).
+4. Check the result and report format.
+5. Expand to all of that application's screens and routes.
+6. Later, optional: automatic runs on GitLab, and more applications.
+
+
+## 13. Document location
+
+/home/ubuntu/kibana_test_new/x-pack/platform/plugins/shared/eet_ui/commands/test_automation_proposal.md
