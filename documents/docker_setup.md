@@ -1,34 +1,39 @@
-# GitLab to Docker Hub demo setup
+# GitHub Actions to Docker Hub demo setup
 
 Image repository: `udaynasya/test_tool`.
 
-The image contains the framework at the GitLab pipeline's commit. Publishing an
+The image contains the framework at the GitHub workflow's commit. Publishing an
 image does not run application tests. To use updated tests, publish a new image.
 
-## One-time GitLab setup
+## One-time GitHub setup
 
 1. In Docker Hub, create a personal access token with Read and Write permissions.
-2. In GitLab, open **Settings > CI/CD > Variables** and add:
+2. In your GitHub repository, open **Settings > Secrets and variables > Actions**.
+   Select **New repository secret** and add each secret below:
 
    | Key | Value |
    | --- | --- |
    | `DOCKERHUB_USERNAME` | `udaynasya` |
    | `DOCKERHUB_TOKEN` | Your Docker Hub access token |
 
-   Mask the token and disable variable expansion for it. Mark both variables
-   protected when your default branch is protected. Protected variables are only
-   available to pipelines on protected branches/tags.
-3. Ensure a Linux Docker runner is available. The pipeline uses Docker-in-Docker
-   with TLS. A self-managed Docker runner needs privileged mode and a shared
-   `/certs/client` volume; GitLab.com instance runners support this setup.
-4. Commit and push the Docker files and `.gitlab-ci.yml` to the default branch.
-5. Open **Build > Pipelines**, select the pipeline, and click Play on
-   `publish_docker_image`.
+   Use the newly generated token, replacing the one previously exposed in a
+   screenshot. GitLab variables do not transfer to GitHub. Do not put the token
+   in `.env` or tracked files.
+3. Ensure GitHub Actions is enabled for the repository. The workflow uses a
+   GitHub-hosted Ubuntu runner with Docker already available.
+4. Commit and push the Docker files and `.github/workflows/docker-publish.yml`
+   to the default branch (usually `main`).
+5. Open **Actions > Build and publish Docker image > Run workflow**. Select the
+   default branch and click **Run workflow**. Publishing is restricted to that
+   branch; runs selected on other branches are skipped.
 
 The job builds the image, checks Chromium launches, and pushes two tags:
 `udaynasya/test_tool:<full-commit-sha>` and `udaynasya/test_tool:latest`.
 Use the commit tag for repeatable demo executions. No automatic test trigger is
 configured.
+
+This workflow runs manually only. Pushing code does not build images or run
+application tests. A local Docker installation is not required for this build.
 
 ## Run on the demo server (Linux)
 

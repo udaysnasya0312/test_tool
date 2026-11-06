@@ -2,7 +2,7 @@
 
 A reusable Playwright framework for UI and HTTP API checks. The shared engine lives in `core/`; each application's URLs, authentication, data hooks, and test cases live in `apps/<name>/`.
 
-For publishing `udaynasya/test_tool` from GitLab and running it with reports saved
+For publishing `udaynasya/test_tool` from GitHub Actions and running it with reports saved
 on server disk, see [Docker setup](documents/docker_setup.md).
 
 ## Install
