@@ -1,0 +1,10 @@
+services:
+  test-runner:
+    image: udaynasya/test_tool:latest
+    pull_policy: always
+    init: true
+    shm_size: "1gb"
+    env_file:
+      - .env
+    volumes:
+      - ./reports:/app/reports
